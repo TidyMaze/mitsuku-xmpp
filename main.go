@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 )
 import "net/http"
 
@@ -25,11 +26,17 @@ type SendResponse struct {
 	Channel   int
 }
 
-func send(msg string, sessionId int) ([]string, int, error) {
+func getClientName() string {
+	nsec := time.Now().UnixNano() / 1000000
+	return "cw" + fmt.Sprintf("%x", nsec)
+}
+
+func send(msg string, sessionId int, clientName string) ([]string, int, error) {
 	data := url.Values{
-		"input":   {msg},
-		"channel": {"6"},
-		"botkey":  {"n0M6dW2XZacnOgCWTp0FRYUuMjSfCkJGgobNpgPv9060_72eKnu3Yl-o1v2nFGtSXqfwJBG2Ros~"},
+		"input":       {msg},
+		"channel":     {"6"},
+		"botkey":      {"n0M6dW2XZacnOgCWTp0FRYUuMjSfCkJGgobNpgPv9060_72eKnu3Yl-o1v2nFGtSXqfwJBG2Ros~"},
+		"client_name": {clientName},
 	}
 
 	if sessionId != -1 {
@@ -106,7 +113,9 @@ func main() {
 		log.Fatal(err)
 	}
 
-	var sessionId int = -1
+	userToClientName := make(map[string]string)
+
+	var _ int = -1
 	var apiResponses []string
 	for {
 		chat, err := talk.Recv()
@@ -122,7 +131,15 @@ func main() {
 				fmt.Println("not me, I'm", myResource, "message is from", otherResource)
 				fmt.Println(v)
 
-				apiResponses, sessionId, err = send(v.Text, sessionId)
+				var found string = userToClientName[otherResource]
+				if found == "" {
+					userToClientName[otherResource] = getClientName()
+					found = userToClientName[otherResource]
+				}
+
+				fmt.Println("client name is", found)
+
+				apiResponses, _, err = send(v.Text, -1, found)
 				if err != nil {
 					fmt.Println("Error calling Mitsuku api", err)
 				}
