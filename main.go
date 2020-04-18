@@ -3,7 +3,9 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/mattn/go-xmpp"
 	"io/ioutil"
+	"log"
 	"net/url"
 	"strconv"
 	"strings"
@@ -12,13 +14,17 @@ import "net/http"
 
 const Url = "https://miapi.pandorabots.com/talk"
 
+const NickName = "Mitsuku"
+
+const Room = "test-mitsuku"
+
 type SendResponse struct {
 	Responses []string
 	Sessionid int
 	Channel   int
 }
 
-func send(msg string, sessionId int) (*string, *int, error) {
+func send(msg string, sessionId int) ([]string, int, error) {
 	data := url.Values{
 		"input":   {msg},
 		"channel": {"6"},
@@ -32,7 +38,7 @@ func send(msg string, sessionId int) (*string, *int, error) {
 	req, err := http.NewRequest("POST", Url, strings.NewReader(data.Encode()))
 
 	if err != nil {
-		return nil, nil, err
+		return []string{}, -1, err
 	}
 
 	req.Header.Add("Referer", "https://www.pandorabots.com/mitsuku/")
@@ -43,7 +49,7 @@ func send(msg string, sessionId int) (*string, *int, error) {
 	resp, err := client.Do(req)
 
 	if err != nil {
-		return nil, nil, err
+		return []string{}, -1, err
 	}
 
 	defer resp.Body.Close()
@@ -51,31 +57,86 @@ func send(msg string, sessionId int) (*string, *int, error) {
 	bytes, err := ioutil.ReadAll(resp.Body)
 
 	if err != nil {
-		return nil, nil, err
+		return []string{}, -1, err
 	}
 
 	var parsed SendResponse
 
 	if json.Unmarshal(bytes, &parsed) != nil {
-		return nil, nil, err
+		return []string{}, -1, err
 	}
 
-	responsesJoined := strings.Join(parsed.Responses, "\n")
-	return &responsesJoined, &parsed.Sessionid, nil
+	return parsed.Responses, parsed.Sessionid, nil
+}
+
+func getResource(jid string) (string, string) {
+	split := strings.Split(jid, "/")
+	if len(split) == 2 {
+		return split[0], split[1]
+	} else {
+		return "", ""
+	}
 }
 
 func main() {
-	response, sessionId, err := send("Hey my name is Yann", -1)
-	if err != nil {
-		panic(err)
+	options := xmpp.Options{
+		Host:          "chat.codingame.com:5222",
+		User:          "3774175@chat.codingame.com",
+		Password:      "pass",
+		NoTLS:         true,
+		Debug:         true,
+		Session:       true,
+		Status:        "xa",
+		StatusMessage: "Not connected",
 	}
 
-	fmt.Println("got response: <", *response, "> with sessionId", *sessionId)
+	talk, err := options.NewClient()
 
-	response2, sessionId2, err := send("What is my name?", *sessionId)
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
 
-	fmt.Println("got response: <", *response2, "> with sessionId", *sessionId2)
+	_, err = talk.JoinMUCNoHistory(Room+"@conference.codingame.com", NickName)
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	var sessionId int = -1
+	var apiResponses []string
+	for {
+		chat, err := talk.Recv()
+		if err != nil {
+			log.Fatal(err)
+		}
+		switch v := chat.(type) {
+		case xmpp.Chat:
+			_, myResource := getResource(talk.JID())
+			otherBareJid, otherResource := getResource(v.Remote)
+			if otherResource != "" && otherResource != myResource && otherResource != NickName && strings.Contains(v.Text, NickName) {
+				fmt.Println("Received chat:", v.Remote, v.Text)
+				fmt.Println("not me, I'm", myResource, "message is from", otherResource)
+				fmt.Println(v)
+
+				apiResponses, sessionId, err = send(v.Text, sessionId)
+				if err != nil {
+					fmt.Println("Error calling Mitsuku api", err)
+				}
+
+				for _, r := range apiResponses {
+					_, err := talk.Send(xmpp.Chat{
+						Remote: otherBareJid,
+						Type:   "groupchat",
+						Text:   r,
+					})
+
+					if err != nil {
+						fmt.Println("Error sending message", err)
+					}
+				}
+			}
+		case xmpp.Presence:
+			fmt.Println("presence:", v.From, v.Show, v.Status)
+		}
+	}
 }
