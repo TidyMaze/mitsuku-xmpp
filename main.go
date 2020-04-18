@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"github.com/mattn/go-xmpp"
 	"io/ioutil"
@@ -79,10 +80,13 @@ func getResource(jid string) (string, string) {
 }
 
 func main() {
+	var password = flag.String("password", "", "XMPP password for user")
+	flag.Parse()
+
 	options := xmpp.Options{
 		Host:          "chat.codingame.com:5222",
 		User:          "3774175@chat.codingame.com",
-		Password:      "pass",
+		Password:      *password,
 		NoTLS:         true,
 		Debug:         true,
 		Session:       true,
