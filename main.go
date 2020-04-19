@@ -88,7 +88,7 @@ func getResource(jid string) (string, string) {
 }
 
 func openDb() (*badger.DB, error) {
-	return badger.Open(badger.DefaultOptions("/tmp/badger"))
+	return badger.Open(badger.DefaultOptions("/tmp/mitsuku-xmpp"))
 }
 
 func storeResourceClientName(db *badger.DB, resource string, clientName string) error {
