@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	badger "github.com/dgraph-io/badger"
 	"github.com/mattn/go-xmpp"
 	"io/ioutil"
 	"log"
@@ -86,9 +87,50 @@ func getResource(jid string) (string, string) {
 	}
 }
 
+func openDb() (*badger.DB, error) {
+	return badger.Open(badger.DefaultOptions("/tmp/badger"))
+}
+
+func storeResourceClientName(db *badger.DB, resource string, clientName string) error {
+	err := db.Update(func(txn *badger.Txn) error {
+		err := txn.Set([]byte(resource), []byte(clientName))
+		return err
+	})
+	return err
+}
+
+func getResourceClientName(db *badger.DB, resource string, cb func(clientName string)) error {
+	err := db.View(func(txn *badger.Txn) error {
+		item, err := txn.Get([]byte(resource))
+
+		if err == badger.ErrKeyNotFound {
+			cb("")
+			return nil
+		}
+
+		if err != nil {
+			return err
+		}
+		stored, err := item.ValueCopy(nil)
+		if err != nil {
+			return err
+		}
+
+		cb(string(stored))
+		return nil
+	})
+	return err
+}
+
 func main() {
 	var password = flag.String("password", "", "XMPP password for user")
 	flag.Parse()
+
+	db, err := openDb()
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close()
 
 	options := xmpp.Options{
 		Host:          "chat.codingame.com:5222",
@@ -113,8 +155,6 @@ func main() {
 		log.Fatal(err)
 	}
 
-	userToClientName := make(map[string]string)
-
 	var _ int = -1
 	var apiResponses []string
 	for {
@@ -131,29 +171,37 @@ func main() {
 				fmt.Println("not me, I'm", myResource, "message is from", otherResource)
 				fmt.Println(v)
 
-				var found string = userToClientName[otherResource]
-				if found == "" {
-					userToClientName[otherResource] = getClientName()
-					found = userToClientName[otherResource]
-				}
-
-				fmt.Println("client name is", found)
-
-				apiResponses, _, err = send(v.Text, -1, found)
-				if err != nil {
-					fmt.Println("Error calling Mitsuku api", err)
-				}
-
-				for _, r := range apiResponses {
-					_, err := talk.Send(xmpp.Chat{
-						Remote: otherBareJid,
-						Type:   "groupchat",
-						Text:   r,
-					})
-
-					if err != nil {
-						fmt.Println("Error sending message", err)
+				err := getResourceClientName(db, otherResource, func(clientName string) {
+					if clientName == "" {
+						clientName = getClientName()
+						err := storeResourceClientName(db, otherResource, clientName)
+						if err != nil {
+							fmt.Println("Error when storing client name", err)
+							return
+						}
 					}
+
+					fmt.Println("client name is", clientName)
+
+					apiResponses, _, err = send(v.Text, -1, clientName)
+					if err != nil {
+						fmt.Println("Error calling Mitsuku api", err)
+					}
+
+					for _, r := range apiResponses {
+						_, err := talk.Send(xmpp.Chat{
+							Remote: otherBareJid,
+							Type:   "groupchat",
+							Text:   r,
+						})
+
+						if err != nil {
+							fmt.Println("Error sending message", err)
+						}
+					}
+				})
+				if err != nil {
+					fmt.Println("Error fetching client name", err)
 				}
 			}
 		case xmpp.Presence:
